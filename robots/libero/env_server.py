@@ -87,7 +87,9 @@ def build_env_cfg(
             "video_cfg": {
                 "save_video": True,
                 "info_on_video": True,
-                "video_base_dir": "/tmp/primitive_videos",
+                "video_base_dir": os.environ.get(
+                    "RPENT_PRIMITIVE_VIDEO_DIR", "/tmp/primitive_videos"
+                ),
             },
             "init_params": {
                 "camera_heights": 256,
