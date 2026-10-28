@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from robots.libero.prompts import explore as explore_parts
+from robots.libero.prompts import knowledge_eval as knowledge_parts
 from robots.libero.prompts import local_eval as local_eval_parts
 from robots.libero.prompts import system as system_parts
 from robots.libero.prompts import user as user_parts
@@ -29,6 +30,8 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
     """Assemble the LIBERO system prompt for the selected run mode."""
     if (variables or {}).get("mode", "eval") == "explore":
         return explore_parts.system_prompt()
+    if (variables or {}).get("knowledge_profile", "mem-proven") == "proven":
+        return knowledge_parts.system_prompt()
     if (variables or {}).get("memory_profile", "hf") == "local":
         return local_eval_parts.system_prompt()
     return {
@@ -53,10 +56,13 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
 
 def user_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
     """Assemble the LIBERO user prompt tree."""
+    begin = user_parts.BEGIN
+    if (variables or {}).get("knowledge_profile", "mem-proven") == "proven":
+        begin = knowledge_parts.BEGIN_NO_MEMORY
     return {
         "CELL": user_parts.CELL,
         "MODE": user_parts.MODE,
-        "BEGIN": user_parts.BEGIN,
+        "BEGIN": begin,
     }
 
 

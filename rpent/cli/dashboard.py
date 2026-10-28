@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from rpent.cli.main import _handoff_message, _serialize_messages
 from rpent.dashboard.events import RunStartedEvent
-from rpent.planner.base import build_planner
+from rpent.planner.base import api_planner_options, build_planner
 from rpent.robots import get_toolkit
 from rpent.utils.logging import get_logger, init_output_dir
 from rpent.utils.resources import ensure_resources
@@ -104,6 +104,7 @@ def run_dashboard_session(
     if (
         not getattr(args, "explore", False)
         and getattr(args, "memory_profile", "hf") == "hf"
+        and getattr(args, "knowledge_profile", "mem-proven") != "proven"
     ):
         ensure_resources(robot_spec)
     state = DashboardState(
@@ -235,6 +236,9 @@ def _run_dashboard_task(
                             0,
                         ),
                         state_output_dir=state_output_dir,
+                        knowledge_profile=getattr(
+                            task_args, "knowledge_profile", "mem-proven"
+                        ),
                     )
                 else:
                     toolkit = get_toolkit(
@@ -257,6 +261,7 @@ def _run_dashboard_task(
                         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
                         dashboard_events=state,
                         no_images=args.no_images,
+                        **api_planner_options(args),
                     )
                     result = planner.solve(
                         system_prompt=system_prompt,

@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import queue
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from rpent.dashboard.events import DashboardEventSink
 from rpent.dashboard.interaction import DashboardInteractionPort
@@ -114,6 +114,22 @@ class Planner(Protocol):
 # ---------------------------------------------------------------------------
 
 
+SAMPLING_OPTIONS = ("temperature", "top_p", "top_k", "presence_penalty", "generation_seed")
+
+
+def api_planner_options(args: Any) -> dict[str, Any]:
+    """The API planner's optional CLI settings as ``build_planner`` keywords."""
+    sampling = {
+        name: getattr(args, name)
+        for name in SAMPLING_OPTIONS
+        if getattr(args, name, None) is not None
+    }
+    return {
+        "send_back_thinking": getattr(args, "send_back_thinking", True),
+        "sampling": sampling or None,
+    }
+
+
 def build_planner(
     planner_type: str,
     *,
@@ -128,6 +144,8 @@ def build_planner(
     claude_code_max_budget_usd: float | None = None,
     dashboard_events: DashboardEventSink,
     no_images: bool = False,
+    send_back_thinking: bool = True,
+    sampling: dict[str, float | int] | None = None,
 ):
     """Build a planner for the given backend, resolving credentials from env vars."""
     # Imports are deferred to avoid a circular import: api_loop / claude_code /
@@ -165,7 +183,28 @@ def build_planner(
                 kwargs["base_url"] = base_url
             return provider_cls(**kwargs)
 
-        api_model = infer_model(model, provider_factory=_provider_factory)
+        if send_back_thinking:
+            api_model = infer_model(model, provider_factory=_provider_factory)
+        else:
+            # pydantic-ai resends every earlier ThinkingPart as ``reasoning``.
+            # ``infer_model`` takes no profile and ``Model.profile`` is cached at
+            # construction, so the Chat Completions model is built here with the
+            # same provider and the one profile switch that stops the resend.
+            from pydantic_ai.models import parse_model_id
+            from pydantic_ai.models.openai import OpenAIChatModel
+            from pydantic_ai.profiles.openai import OpenAIModelProfile
+
+            provider_name, model_name = parse_model_id(model)
+            if provider_name != "openai-chat":
+                raise ValueError(
+                    "--no-send-back-thinking is only implemented for "
+                    f"'openai-chat:' models, got {model!r}"
+                )
+            api_model = OpenAIChatModel(
+                model_name,
+                provider=_provider_factory(provider_name),
+                profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts=False),
+            )
         api_timeout_s = planner_timeout_s
         if api_timeout_s is None:
             api_timeout_s = int(os.environ.get("CELL_TIMEOUT_S", "1200"))
@@ -176,6 +215,7 @@ def build_planner(
             dashboard_events=dashboard_events,
             no_images=no_images,
             timeout_s=api_timeout_s,
+            sampling=sampling,
         )
     if planner_type == "claude_code":
         from rpent.planner.claude_code import ClaudeCodePlanner

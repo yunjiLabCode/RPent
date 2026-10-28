@@ -49,10 +49,13 @@ class LiberoToolkit(Toolkit):
         mode: str = "evaluation",
         attempts_per_session: int = 0,
         state_output_dir: Path | str | None = None,
+        knowledge_profile: str = "mem-proven",
     ) -> None:
         self._state_output_dir = Path(state_output_dir or get_output_dir())
         state = EnvState(self._state_output_dir)
         super().__init__(dashboard_events=dashboard_events, state=state)
+        if knowledge_profile == "proven":
+            self._confine_read_tools()
         if mode not in {"evaluation", "exploration"}:
             raise ValueError(f"unsupported LIBERO toolkit mode: {mode!r}")
         self._mode = mode
@@ -67,6 +70,30 @@ class LiberoToolkit(Toolkit):
     # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
+    def _confine_read_tools(self) -> None:
+        """``proven``: the file tools reach the guides and this run, nothing else."""
+        from robots.libero.prompts import knowledge_eval
+        from rpent.tools import common
+
+        roots = knowledge_eval.proven_read_roots(self._state_output_dir)
+
+        def confined(handler):
+            @readonly
+            def guarded(path: str = "", **kwargs):
+                target = common._resolve(path).resolve() if path else roots[-1]
+                if not any(target == root or root in target.parents for root in roots):
+                    return {
+                        "error": "not readable in this run: only the guides and "
+                        f"this run's output directory are ({target})"
+                    }
+                return handler(str(target), **kwargs)
+
+            return guarded
+
+        for name in knowledge_eval.GUARDED_READ_TOOLS:
+            spec, handler = self._tools[name]
+            self.add_tool(name, spec, confined(handler))
+
     def _register_libero_tools(self) -> None:
         # These read-only handlers need the run's EnvState bound in. Every
         # other spec binds to a primitive-driver method and captures state by

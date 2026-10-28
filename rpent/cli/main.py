@@ -52,7 +52,11 @@ from rpent.dashboard.events import (
     NullDashboardEventSink,
     RunStartedEvent,
 )
-from rpent.planner.base import REASONING_EFFORTS, build_planner
+from rpent.planner.base import (
+    REASONING_EFFORTS,
+    api_planner_options,
+    build_planner,
+)
 from rpent.robots import enumerate_robots, get_robot_spec, get_toolkit
 from rpent.utils.logging import get_logger, init_output_dir
 from rpent.utils.resources import ensure_resources
@@ -143,6 +147,27 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--max-turns", type=int, default=100)
     ap.add_argument("--max-tokens", type=int, default=8192)
+    ap.add_argument(
+        "--no-send-back-thinking",
+        dest="send_back_thinking",
+        action="store_false",
+        help="API planner, openai-chat models only: do not resend earlier turns' "
+        "thinking with each request. Default: resend it, as pydantic-ai does.",
+    )
+    for flag, kind in (
+        ("--temperature", float),
+        ("--top-p", float),
+        ("--top-k", int),
+        ("--presence-penalty", float),
+        ("--generation-seed", int),
+    ):
+        ap.add_argument(
+            flag,
+            type=kind,
+            default=None,
+            help="API planner sampling setting. Default: not sent, so the "
+            "endpoint's own default applies.",
+        )
     ap.add_argument(
         "--reasoning-effort",
         choices=REASONING_EFFORTS,
@@ -278,6 +303,7 @@ def _start_continuation_session(
         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
         dashboard_events=dashboard_events,
         no_images=args.no_images,
+        **api_planner_options(args),
     )
     system_prompt = prompt_bundle.render(
         "system",
@@ -346,7 +372,9 @@ def main() -> int:
 
     # Preserve the original HF-backed evaluation behavior by default.
     memory_profile = getattr(args, "memory_profile", "hf")
-    if not getattr(args, "explore", False) and memory_profile == "hf":
+    if getattr(args, "knowledge_profile", "mem-proven") == "proven":
+        logger.info("resources: knowledge profile proven uses no memory resources")
+    elif not getattr(args, "explore", False) and memory_profile == "hf":
         ensure_resources(robot_spec)
     else:
         logger.info("resources: using local %s memory profile", memory_profile)
@@ -366,6 +394,7 @@ def main() -> int:
         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
         dashboard_events=dashboard_events,
         no_images=args.no_images,
+        **api_planner_options(args),
     )
     prompt_bundle = robot_spec.prompts
     prompt_vars = {**prompt_vars, "output_dir": output_dir}
@@ -406,6 +435,7 @@ def main() -> int:
     # --- agent loop --------------------------------------------------------
     t0 = time.time()
     finish_result, messages, agent_error = None, [], None
+    solved = False
     stats: dict = {}
     first_user_msg: str | None = user_msg
     if await_first_prompt is not None:
@@ -453,6 +483,7 @@ def main() -> int:
                         0,
                     ),
                     state_output_dir=state_output_dir,
+                    knowledge_profile=getattr(args, "knowledge_profile", "mem-proven"),
                 )
             else:
                 toolkit = get_toolkit(
@@ -512,6 +543,8 @@ def main() -> int:
         **task_desc,
         "model": args.model,
         "elapsed_s": round(elapsed, 1),
+        "solved": solved,
+        "agent_error": agent_error,
         "finish": finish_result,
         "stats": stats,
         "messages": _serialize_messages(messages),

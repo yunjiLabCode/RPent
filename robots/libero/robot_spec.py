@@ -116,6 +116,7 @@ def get_toolkit(
     mode: str = "evaluation",
     attempts_per_session: int = 0,
     state_output_dir: Path | str | None = None,
+    knowledge_profile: str = "mem-proven",
 ):
     """Return the LIBERO toolkit (common tools + LIBERO primitives)."""
     from robots.libero.toolkit import LiberoToolkit
@@ -126,6 +127,7 @@ def get_toolkit(
         mode=mode,
         attempts_per_session=attempts_per_session,
         state_output_dir=state_output_dir,
+        knowledge_profile=knowledge_profile,
     )
 
 
@@ -193,6 +195,14 @@ def _add_cli_args(parser: argparse.ArgumentParser, use_dashboard: bool) -> None:
         "If unset, a local SAM3 server is spawned.",
     )
     parser.add_argument(
+        "--knowledge-profile",
+        choices=["mem-proven", "proven"],
+        default="mem-proven",
+        help="mem-proven (default) is the unmodified prompt and tool set. proven "
+        "keeps only the cross-task Proven levers: no memory library, guides, "
+        "seed-0 references, per-task recipes, or file-reading tools.",
+    )
+    parser.add_argument(
         "--cuda-device",
         type=int,
         default=None,
@@ -219,6 +229,14 @@ def _parse_config(args: argparse.Namespace) -> RunConfig:
         raise ValueError("--explore cannot be used with --memory-profile hf")
     if explore and args.explore_sessions <= 0:
         raise ValueError("--explore-sessions must be greater than 0")
+    knowledge_profile = getattr(args, "knowledge_profile", "mem-proven")
+    if knowledge_profile == "proven" and (
+        explore or args.memory_dir is not None or requested_profile == "local"
+    ):
+        raise ValueError(
+            "--knowledge-profile proven uses no external memory: it takes no "
+            "--explore, --memory-dir, or --memory-profile local"
+        )
     memory_profile = requested_profile or ("local" if explore else "hf")
     if memory_profile == "hf" and args.memory_dir is not None:
         raise ValueError("--memory-dir requires --memory-profile local or --explore")
@@ -241,6 +259,7 @@ def _parse_config(args: argparse.Namespace) -> RunConfig:
         "recipe_tag": recipe_tag,
         "mode": "explore" if explore else "eval",
         "memory_profile": memory_profile,
+        "knowledge_profile": knowledge_profile,
         "memory_dir": str(memory_dir),
         "reference_tag": f"{args.suite.replace('libero_', '')}_t{args.task}_s0",
         # Per-cell inbox: parallel explore runs must not append to a shared file.

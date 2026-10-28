@@ -88,9 +88,11 @@ class ApiAgentLoop:
         *,
         dashboard_events: DashboardEventSink,
         timeout_s: int | None = None,
+        sampling: dict[str, float | int] | None = None,
     ):
         """Store the pydantic-ai model and the output-token cap."""
         self._model = model
+        self._sampling = dict(sampling or {})
         self._max_tokens = max_tokens
         self._dashboard_events = dashboard_events
         self._no_images = no_images
@@ -368,7 +370,9 @@ class ApiAgentLoop:
             self._model,
             instructions=system_prompt or None,
             tools=_build_tools(toolkit, no_images=self._no_images),
-            model_settings=_build_model_settings(self._model, self._max_tokens),
+            model_settings=_build_model_settings(
+                self._model, self._max_tokens, self._sampling
+            ),
             capabilities=[
                 Thinking(effort=thinking_effort),
                 ProcessHistory(processor=_prune_history_images),
@@ -624,9 +628,28 @@ class _ApiDashboardSession:
                     await self._control.tool_completed(self)
 
 
-def _build_model_settings(model: Model, max_tokens: int) -> ModelSettings:
+def _build_model_settings(
+    model: Model, max_tokens: int, sampling: dict[str, float | int] | None = None
+) -> ModelSettings:
     """Build model settings, enabling prompt caching for Anthropic models."""
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel
+
+    # Only what the caller set is sent; the endpoint's defaults cover the rest.
+    sampling = dict(sampling or {})
+    extra: dict[str, Any] = {
+        name: sampling[name]
+        for name in ("temperature", "top_p", "presence_penalty")
+        if name in sampling
+    }
+    if "generation_seed" in sampling:
+        extra["seed"] = sampling["generation_seed"]
+    if "top_k" in sampling:
+        # Chat Completions has no top_k field; vLLM takes it in the body.
+        if isinstance(model, OpenAIChatModel):
+            extra["extra_body"] = {"top_k": sampling["top_k"]}
+        else:
+            extra["top_k"] = sampling["top_k"]
 
     if isinstance(model, AnthropicModel):
         return AnthropicModelSettings(
@@ -634,8 +657,9 @@ def _build_model_settings(model: Model, max_tokens: int) -> ModelSettings:
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
+            **extra,
         )
-    return ModelSettings(max_tokens=max_tokens)
+    return ModelSettings(max_tokens=max_tokens, **extra)
 
 
 def _prune_history_images(messages: list[ModelMessage]) -> list[ModelMessage]:
