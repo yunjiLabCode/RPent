@@ -126,22 +126,38 @@ class ApiAgentLoop:
                     interaction=dashboard_interaction,
                 )
             )
-        solve = self._solve(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            toolkit=toolkit,
-            max_turns=max_turns,
-            input_queue=input_queue,
-        )
         if input_queue is not None:
-            return asyncio.run(solve)
+            return asyncio.run(
+                self._solve(
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    toolkit=toolkit,
+                    max_turns=max_turns,
+                    input_queue=input_queue,
+                )
+            )
+        # Share this list with _solve so a wall-clock timeout still returns
+        # every message appended before cancellation. Interactive and dashboard
+        # calls omit it and keep building their own list.
+        messages: list[dict[str, Any]] = [{"role": "user", "content": user_message}]
         try:
-            return asyncio.run(asyncio.wait_for(solve, timeout=self._timeout_s))
+            return asyncio.run(
+                asyncio.wait_for(
+                    self._solve(
+                        system_prompt=system_prompt,
+                        user_message=user_message,
+                        toolkit=toolkit,
+                        max_turns=max_turns,
+                        messages=messages,
+                    ),
+                    timeout=self._timeout_s,
+                )
+            )
         except asyncio.TimeoutError:
             toolkit.cancel_active_and_wait()
             return PlannerResult(
                 finish_result=None,
-                messages=[{"role": "user", "content": user_message}],
+                messages=messages,
                 stats={},
                 error=f"API planner timed out after {self._timeout_s}s",
             )
@@ -154,11 +170,13 @@ class ApiAgentLoop:
         toolkit: Toolkit,
         max_turns: int,
         input_queue: queue.Queue[str | None] | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> PlannerResult:
         agent = self._build_agent(system_prompt, toolkit)
 
         interactive = input_queue is not None
-        messages: list[dict[str, Any]] = [{"role": "user", "content": user_message}]
+        if messages is None:
+            messages = [{"role": "user", "content": user_message}]
         observer = _ApiRunObserver(
             dashboard_events=self._dashboard_events,
             messages=messages,
