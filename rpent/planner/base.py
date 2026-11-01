@@ -50,7 +50,7 @@ def strip_mcp_prefix(name: str) -> str:
 class PlannerResult:
     """Result returned by a planner invocation."""
 
-    __slots__ = ("finish_result", "messages", "stats", "error")
+    __slots__ = ("finish_result", "messages", "stats", "error", "terminated_by")
 
     def __init__(
         self,
@@ -59,6 +59,7 @@ class PlannerResult:
         messages: list[dict] | None = None,
         stats: dict | None = None,
         error: str | None = None,
+        terminated_by: str | None = None,
     ):
         """Initialize a serializable planner result."""
         self.finish_result = (
@@ -69,6 +70,8 @@ class PlannerResult:
             stats or {}
         )  # {"total_input_tokens", "total_output_tokens", "turns_used", "tool_calls"}
         self.error = error  # str | None  — set when the planner raises
+        # "planner_timeout" or "model_timeout". None on a normal finish.
+        self.terminated_by = terminated_by
 
 
 class Planner(Protocol):

@@ -160,6 +160,7 @@ class ApiAgentLoop:
                 messages=messages,
                 stats={},
                 error=f"API planner timed out after {self._timeout_s}s",
+                terminated_by="planner_timeout",
             )
 
     async def _solve(
@@ -183,6 +184,7 @@ class ApiAgentLoop:
             max_turns=max_turns,
         )
         last_error: str | None = None
+        terminated_by: str | None = None
         usage: RunUsage | None = None
         quit_requested = False
 
@@ -294,6 +296,8 @@ class ApiAgentLoop:
             logger.info("usage limit reached: %s", e)
         except Exception as e:  # noqa: BLE001 - surfaced via PlannerResult.error
             last_error = _api_error_text(e, no_images=self._no_images)
+            if type(e).__name__ == "ModelTimeoutError":
+                terminated_by = "model_timeout"
             logger.error("agent run failed: %s", last_error)
 
         return PlannerResult(
@@ -301,6 +305,7 @@ class ApiAgentLoop:
             messages=messages,
             stats=_build_stats(usage, observer.turns, observer.tool_calls),
             error=last_error,
+            terminated_by=terminated_by,
         )
 
     async def _solve_dashboard(

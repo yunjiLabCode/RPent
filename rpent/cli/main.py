@@ -435,6 +435,7 @@ def main() -> int:
     # --- agent loop --------------------------------------------------------
     t0 = time.time()
     finish_result, messages, agent_error = None, [], None
+    terminated_by = None
     solved = False
     stats: dict = {}
     first_user_msg: str | None = user_msg
@@ -504,6 +505,7 @@ def main() -> int:
                 messages += result.messages
                 stats = result.stats
                 agent_error = result.error
+                terminated_by = result.terminated_by
                 if robot_name == "libero":
                     solved = toolkit.solved()
                     if solved:
@@ -549,6 +551,8 @@ def main() -> int:
         "stats": stats,
         "messages": _serialize_messages(messages),
     }
+    if terminated_by:
+        record["terminated_by"] = terminated_by
     with open(transcript_path, "a") as f:
         json.dump(record, f, indent=2, default=str)
 
